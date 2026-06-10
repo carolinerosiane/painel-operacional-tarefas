@@ -146,6 +146,7 @@ input[type=file]{display:none}
     <div id="search-results" style="display:none;position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--sf);border:0.5px solid var(--bd2);border-radius:var(--r10);box-shadow:0 6px 20px rgba(0,0,0,.1);z-index:100;max-height:320px;overflow-y:auto"></div>
   </div>
   <div class="top-right">
+    <span id="sync-status" style="font-size:11px;color:var(--tx3);min-width:70px;text-align:right"></span>
     <button class="btn btn-sm" onclick="exportJSON()">⬇ Backup</button>
     <label class="btn btn-sm" for="imp-file" style="cursor:pointer">⬆ Importar</label>
     <input type="file" id="imp-file" accept=".json" onchange="importJSON(event)">
@@ -370,47 +371,67 @@ input[type=file]{display:none}
 </div>
 
 <script>
+const SUPABASE_URL = 'https://oqxomieelaksiokyxosy.supabase.co'
+const SUPABASE_KEY = 'sb_publishable_BKR558aUWMuR38o5EClquw_HjMmGfTG '
+const SK='op_v5';
 let S={projects:[],tasks:[],meetings:[],notes:'',activeProj:null};
 let dragId=null, reuTasksTemp=[];
 
-// ── SUPABASE CONFIG ───────────────────────────────────────────────────────────
-const SUPA_URL = 'https://oqxomieelaksiokyxosy.supabase.co';
-const SUPA_KEY = 'sb_publishable_BKR558aUWMuR38o5EClquw_HjMmGfTG';
-const SUPA_TABLE = 'estado';
-const SUPA_ID = 'painel_v13';
+// ── PERSIST (Supabase) ────────────────────────────────────────────────────────
+let _saveTimer=null;
 
 async function load(){
+  document.body.style.opacity='0.6';
   try{
-    const res = await fetch(SUPA_URL+'/rest/v1/'+SUPA_TABLE+'?id=eq.'+SUPA_ID, {
-      headers:{'apikey':SUPA_KEY,'Authorization':'Bearer '+SUPA_KEY}
+    const res=await fetch(SUPABASE_URL+'/rest/v1/estado?chave=eq.'+SK+'&select=valor',{
+      headers:{'apikey':SUPABASE_KEY,'Authorization':'Bearer '+SUPABASE_KEY}
     });
-    const rows = await res.json();
-    if(rows && rows.length && rows[0].dados){
-      S = rows[0].dados;
+    if(res.ok){
+      const rows=await res.json();
+      if(rows.length&&rows[0].valor){
+        S=rows[0].valor;
+      }
     }
-  }catch(e){console.warn('Supabase load error:',e);}
+  }catch(e){
+    try{const s=localStorage.getItem(SK);if(s)S=JSON.parse(s);}catch{}
+  }
   if(!S.projects)S.projects=[];
   if(!S.tasks)S.tasks=[];
   if(!S.meetings)S.meetings=[];
   if(!S.notes)S.notes='';
+  document.body.style.opacity='1';
 }
 
 async function save(){
+  try{localStorage.setItem(SK,JSON.stringify(S));}catch{}
   try{
-    await fetch(SUPA_URL+'/rest/v1/'+SUPA_TABLE, {
+    const res=await fetch(SUPABASE_URL+'/rest/v1/estado',{
       method:'POST',
       headers:{
-        'apikey':SUPA_KEY,
-        'Authorization':'Bearer '+SUPA_KEY,
+        'apikey':SUPABASE_KEY,
+        'Authorization':'Bearer '+SUPABASE_KEY,
         'Content-Type':'application/json',
         'Prefer':'resolution=merge-duplicates'
       },
-      body:JSON.stringify({id:SUPA_ID, dados:S})
+      body:JSON.stringify({chave:SK,valor:S})
     });
-  }catch(e){console.warn('Supabase save error:',e);}
+    const statusEl=document.getElementById('sync-status');
+    if(statusEl){
+      statusEl.textContent=res.ok?'☁ Salvo':'⚠ Erro ao salvar';
+      statusEl.style.color=res.ok?'var(--gr)':'var(--rd)';
+      clearTimeout(statusEl._t);
+      statusEl._t=setTimeout(function(){statusEl.textContent='';},2500);
+    }
+  }catch(e){
+    console.warn('Falha ao salvar no Supabase:',e);
+  }
 }
 
-function persist(){save();renderAll();}
+function persist(){
+  clearTimeout(_saveTimer);
+  _saveTimer=setTimeout(function(){save();},400);
+  renderAll();
+}
 function exportJSON(){
   const b=new Blob([JSON.stringify(S,null,2)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(b);
@@ -419,7 +440,14 @@ function exportJSON(){
 function importJSON(e){
   const f=e.target.files[0];if(!f)return;
   const r=new FileReader();
-  r.onload=function(ev){try{S=JSON.parse(ev.target.result);persist();alert('Importado com sucesso!');}catch{alert('Arquivo inválido.');}};
+  r.onload=async function(ev){
+    try{
+      S=JSON.parse(ev.target.result);
+      renderAll();
+      await save();
+      alert('Importado e salvo na nuvem com sucesso!');
+    }catch(err){alert('Arquivo inválido.');}
+  };
   r.readAsText(f);e.target.value='';
 }
 
@@ -1151,7 +1179,7 @@ function jumpToTask(taskId){
   if(!S.projects.length){
     const id=uid();
     S.projects.push({id:id,name:'Projeto Operacional',desc:'Meu primeiro projeto.',status:'and',color:'#1a6b4a',due:''});
-    S.activeProj=id; await save();
+    S.activeProj=id;await save();
   }
   renderAll();
   if(S.activeProj)showProj(S.activeProj);
